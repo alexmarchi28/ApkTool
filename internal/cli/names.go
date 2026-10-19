@@ -1,19 +1,13 @@
-package main
+package cli
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
 )
-
-var packageRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`)
-
-// validPackage reports whether s is a valid Android package name.
-func validPackage(s string) bool { return packageRe.MatchString(s) }
 
 // isApkFile reports whether path is an existing file with .apk extension.
 func isApkFile(path string) bool {
@@ -45,17 +39,20 @@ func fileNameFor(label string, date time.Time) string {
 // uniquePath returns p, or p with "_2", "_3", ... before the extension if
 // a file with that name already exists.
 func uniquePath(p string) string {
-	if _, err := os.Stat(p); os.IsNotExist(err) {
-		return p
-	}
 	ext := filepath.Ext(p)
 	base := strings.TrimSuffix(p, ext)
-	for i := 2; ; i++ {
-		c := fmt.Sprintf("%s_%d%s", base, i, ext)
-		if _, err := os.Stat(c); os.IsNotExist(err) {
-			return c
-		}
+	c := p
+	for i := 2; exists(c); i++ {
+		c = fmt.Sprintf("%s_%d%s", base, i, ext)
 	}
+	return c
+}
+
+// exists reports whether something is at path. A path that cannot be
+// checked counts as free: writing there will report the real problem.
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
 }
 
 // cleanPath removes the quotes added when a file is dragged onto the console.

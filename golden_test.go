@@ -3,14 +3,15 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"flag"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"apktool/internal/platform"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files")
@@ -42,20 +43,17 @@ func runGolden(t *testing.T, src string, input func(src, dest string) []string, 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dest := t.TempDir()
-	stdinReader = bufio.NewReader(strings.NewReader(strings.Join(input(src, dest), "\n") + "\n"))
-
-	r, w, _ := os.Pipe()
-	stdout := os.Stdout
-	os.Stdout = w
-	err := run()
-	os.Stdout = stdout
-	w.Close()
-	out, _ := io.ReadAll(r)
+	in := strings.NewReader(strings.Join(input(src, dest), "\n") + "\n")
+	var out bytes.Buffer
+	app, err := newApp(platform.New(in), &out)
+	if err == nil {
+		err = app.Run()
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got := strings.NewReplacer(src, "<SRC>", dest, "<DEST>", home, "<HOME>").Replace(string(out))
+	got := strings.NewReplacer(src, "<SRC>", dest, "<DEST>", home, "<HOME>").Replace(out.String())
 	got = regexp.MustCompile(`_\d{8}\.apk`).ReplaceAllString(got, "_AAAAMMGG.apk")
 	if *update {
 		os.WriteFile(golden, []byte(got), 0o644)
