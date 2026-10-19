@@ -28,8 +28,15 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
-      - name: Fuzzing breve dei parser
+      - name: Test con il race detector
+        if: runner.os == 'Linux'
+        run: go test -race ./...
+      # -fuzzminimizetime è basso perché la minimizzazione di ogni input nuovo
+      # dura altrimenti fino a 60 s e occupa tutto il tempo di fuzzing.
+      - name: Fuzzing breve dei parser e della modifica del manifest
         if: runner.os == 'Linux'
         run: |
-          go test -run XXX -fuzz FuzzParseXML -fuzztime 30s ./internal/binres
-          go test -run XXX -fuzz FuzzParseTable -fuzztime 30s ./internal/binres
+          go test -run XXX -fuzz '^FuzzParseXML$' -fuzztime 30s -fuzzminimizetime 5s ./internal/binres
+          go test -run XXX -fuzz '^FuzzParseTable$' -fuzztime 30s -fuzzminimizetime 5s ./internal/binres
+          go test -run XXX -fuzz '^FuzzEdit$' -fuzztime 30s -fuzzminimizetime 5s ./internal/manifest
+          go test -run XXX -fuzz '^FuzzVerifyV2$' -fuzztime 20s -fuzzminimizetime 5s ./internal/apksign
