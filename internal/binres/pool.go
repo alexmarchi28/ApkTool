@@ -171,15 +171,31 @@ func (p *StringPool) Get(i uint32) string {
 	return p.Strings[i]
 }
 
+// maxUTF8Len is the longest string, in bytes and in UTF-16 units, that a
+// UTF-8 pool can hold.
+const maxUTF8Len = 0x7FFF
+
+// fitsUTF8 reports whether every string can be written in a UTF-8 pool.
+func (p *StringPool) fitsUTF8() bool {
+	for _, s := range p.Strings {
+		if len(s) > maxUTF8Len || len(utf16.Encode([]rune(s))) > maxUTF8Len {
+			return false
+		}
+	}
+	return true
+}
+
 // encode serializes the pool as a chunk. The "sorted" flag is dropped since
-// appended strings break the order.
+// appended strings break the order. A UTF-8 pool is written as UTF-16 if a
+// string is too long for UTF-8: Android reads both.
 func (p *StringPool) encode() []byte {
 	const headerSize = 28
+	isUTF8 := p.utf8 && p.fitsUTF8()
 	var data []byte
 	offsets := make([]byte, 4*(len(p.Strings)+len(p.styleOf)))
 	for i, s := range p.Strings {
 		le.PutUint32(offsets[4*i:], uint32(len(data)))
-		if p.utf8 {
+		if isUTF8 {
 			data = appendUTF8String(data, s)
 		} else {
 			data = appendUTF16String(data, s)
@@ -197,7 +213,7 @@ func (p *StringPool) encode() []byte {
 		stylesStart = stringsStart + len(data)
 	}
 	var flags uint32
-	if p.utf8 {
+	if isUTF8 {
 		flags = poolUTF8
 	}
 	out := make([]byte, headerSize, stringsStart+len(data)+len(p.styles))

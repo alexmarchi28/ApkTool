@@ -99,6 +99,10 @@ func findV2Block(apk []byte) (blockStart, cdOffset, eocdOffset int, value []byte
 		return
 	}
 	blockStart = cdOffset - int(size) - 8
+	if le.Uint64(apk[blockStart:]) != size { // as Android, both size fields must match
+		err = errBadBlock
+		return
+	}
 	pairs := apk[blockStart+8 : cdOffset-24]
 	for len(pairs) >= 12 {
 		n := le.Uint64(pairs)

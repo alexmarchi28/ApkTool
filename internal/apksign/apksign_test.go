@@ -172,7 +172,7 @@ func checkSignV1(t *testing.T, alg DigestAlgorithm, name string, hash crypto.Has
 	}
 }
 
-func makeZip(t *testing.T, files map[string]string, comment string) []byte {
+func makeZip(t testing.TB, files map[string]string, comment string) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	w := zip.NewWriter(&b)

@@ -8,7 +8,7 @@ import (
 	"apktool/internal/binres"
 )
 
-func readTestEntry(t *testing.T, apk, name string) []byte {
+func readTestEntry(t testing.TB, apk, name string) []byte {
 	t.Helper()
 	zr, err := zip.OpenReader("../../testdata/" + apk)
 	if err != nil {
@@ -302,4 +302,31 @@ func TestValidPackage(t *testing.T) {
 			t.Errorf("%q must be invalid", s)
 		}
 	}
+}
+
+// The manifest comes from an untrusted file: editing it must never panic,
+// and an edited manifest must decode with the new values.
+func FuzzEdit(f *testing.F) {
+	for _, apk := range []string{"demo.apk", "nolabel.apk"} {
+		f.Add(readTestEntry(f, apk, "AndroidManifest.xml"))
+	}
+	f.Fuzz(func(t *testing.T, b []byte) {
+		m, err := Parse(b)
+		if err != nil {
+			return
+		}
+		m.Label(nil)
+		m.MinSdk()
+		m.SetPackage("it.fuzz.app")
+		if err := m.SetLabel("Fuzz"); err != nil {
+			return
+		}
+		m2, err := Parse(m.Encode())
+		if err != nil {
+			t.Fatalf("edited manifest does not decode: %v", err)
+		}
+		if m2.Package() != "it.fuzz.app" {
+			t.Errorf("package = %q", m2.Package())
+		}
+	})
 }
