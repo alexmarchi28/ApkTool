@@ -32,7 +32,8 @@ dell'APK (codice, risorse, librerie) vengono copiati byte per byte.
   le traduzioni originali restano.
 
 Poi l'APK viene allineato (come `zipalign`), firmato con gli schemi v1 e v2 e riletto per
-controllare firma, package ed etichetta prima di essere salvato.
+controllare firma, package ed etichetta prima di essere salvato. Come fa `apksigner`, la firma v1
+usa SHA-1 per le app che supportano Android 4.2 o precedenti e SHA-256 per tutte le altre.
 
 ### Limiti
 
@@ -61,10 +62,18 @@ Requisiti: [Go](https://go.dev/dl/) 1.24 o successivo.
 Entrambi eseguono `go vet` e tutti i test, poi creano `dist/ApkTool.exe` per Windows.
 Per i soli test: `go test ./...`. Per compilare per il sistema in uso: `go build -o apktool .`.
 
+### Test
+
+- Ogni pacchetto ha i suoi test; il flusso interattivo è testato con piattaforma ed editor finti.
+- `golden_test.go` confronta l'output completo del programma con `testdata/golden/`: se una modifica
+  al testo è voluta, si aggiornano i file con `go test -run Golden -update .`.
+- `internal/apk/golden_test.go` fissa il contenuto degli APK prodotti per i file di prova.
+
 ## CI e release
 
 - `.github/workflows/ci.yml`: a ogni push su `main` e a ogni pull request esegue `gofmt`, `go vet`
-  e i test su Windows, Linux e macOS, più 30 secondi di fuzzing dei parser.
+  e i test su Windows, Linux e macOS, più il race detector e un breve fuzzing dei parser,
+  della modifica del manifest e della verifica della firma.
 - `.github/workflows/release.yml`: quando si pubblica un tag `v*` esegue i test, compila per
   Windows (amd64), Linux (amd64, arm64) e macOS (Intel, Apple Silicon) e crea la release con
   gli archivi e il file `SHA256SUMS.txt`.
@@ -80,15 +89,14 @@ git push origin v1.0.0
 
 | Percorso | Contenuto |
 |---|---|
-| `main.go` | Flusso interattivo del programma |
-| `names.go` | Validazione del package, nome del file di uscita, pulizia dei percorsi |
-| `platform_windows.go` | Console UTF-8 e colori, input Unicode, finestra di selezione file, cartella Download |
-| `platform_other.go` | Implementazioni per Linux e macOS (percorso digitato nel terminale), usate anche dai test |
+| `main.go` | Collega le parti: piattaforma, flusso interattivo ed editor APK |
+| `internal/cli/` | Flusso interattivo (domande, riepilogo, nome del file di uscita); dipende solo da interfacce |
+| `internal/platform/` | Console, input Unicode, finestra di selezione file e cartella Download su Windows; terminale su Linux e macOS |
+| `internal/apk/` | Lettura dell'APK e creazione della copia allineata, firmata e ricontrollata |
+| `internal/manifest/` | Lettura e modifica di package, etichetta e versione minima di Android nel manifest |
 | `internal/binres/` | Lettura e scrittura dell'XML binario Android e lettura di `resources.arsc` |
-| `internal/manifest/` | Lettura e modifica di package ed etichetta nel manifest |
 | `internal/apksign/` | Firma v1 (JAR) e v2, verifica v2, chiave di debug incorporata |
-| `internal/apk/` | Lettura dell'APK e creazione della copia allineata e firmata |
-| `testdata/` | Piccoli APK di prova usati dai test |
+| `testdata/` | Piccoli APK di prova usati dai test e output atteso del programma (`golden/`) |
 | `build.ps1`, `build.sh` | Test e compilazione dell'exe per Windows |
 | `.github/workflows/` | CI e release automatiche |
 | `rsrc_windows_amd64.syso` | Risorse Windows (icona, manifest, info versione) incluse automaticamente da `go build` |

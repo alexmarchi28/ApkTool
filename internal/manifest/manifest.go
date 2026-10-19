@@ -5,6 +5,8 @@ package manifest
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"apktool/internal/binres"
@@ -19,6 +21,7 @@ const (
 	attrManageSpaceActivity = 0x01010004
 	attrAuthorities         = 0x01010018
 	attrTargetActivity      = 0x01010202
+	attrMinSdkVersion       = 0x0101020c
 	attrBackupAgent         = 0x0101027f
 )
 
@@ -47,6 +50,7 @@ type Manifest struct {
 	x        *binres.XML
 	root     *binres.Element // <manifest>
 	app      *binres.Element // <application>, may be nil
+	usesSDK  *binres.Element // <uses-sdk>, may be nil
 	launcher *binres.Element // launcher activity, may be nil
 }
 
@@ -81,6 +85,8 @@ func (m *Manifest) findElements() {
 				m.root = e
 			case tag == "application" && m.app == nil:
 				m.app = e
+			case tag == "uses-sdk" && m.usesSDK == nil:
+				m.usesSDK = e
 			case (tag == "activity" || tag == "activity-alias") && component == nil:
 				component, componentDepth = e, len(stack)
 				hasMain, hasLauncher = false, false
@@ -116,6 +122,28 @@ func (m *Manifest) Package() string {
 		return s
 	}
 	return ""
+}
+
+// MinSdk returns the minimum API level of the app: 1 if it is not declared,
+// as Android assumes, and 10000 for a preview codename.
+func (m *Manifest) MinSdk() int {
+	if m.usesSDK == nil {
+		return 1
+	}
+	a := m.x.FindAttr(m.usesSDK, attrMinSdkVersion)
+	switch {
+	case a == nil:
+		return 1
+	case a.Type == binres.TypeIntDec || a.Type == binres.TypeIntHex:
+		return int(int32(a.Data))
+	case a.Type == binres.TypeString:
+		s, _ := m.x.StringValue(a)
+		if n, err := strconv.Atoi(s); err == nil {
+			return n
+		}
+		return 10000
+	}
+	return 1
 }
 
 // Label returns the visible name of the app: the label of the launcher
@@ -232,3 +260,10 @@ func (m *Manifest) SetLabel(label string) error {
 
 // Encode returns the compiled manifest.
 func (m *Manifest) Encode() []byte { return m.x.Encode() }
+
+var packageRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`)
+
+// ValidPackage reports whether s is a valid package name: at least two
+// segments separated by dots, each starting with a letter and made of
+// letters, digits and underscores, as Android requires.
+func ValidPackage(s string) bool { return packageRe.MatchString(s) }

@@ -242,3 +242,50 @@ func FuzzParseTable(f *testing.F) {
 		}
 	})
 }
+
+func TestStringPoolLongStrings(t *testing.T) {
+	// A UTF-8 pool can only hold strings up to 0x7FFF bytes: a longer one
+	// must still round-trip, so the pool is written as UTF-16 instead.
+	long := strings.Repeat("é", 0x4000) // 0x8000 bytes in UTF-8
+	huge := strings.Repeat("x", 0x9000) // more than 0x7FFF UTF-16 units
+	for _, utf8 := range []bool{false, true} {
+		p := &StringPool{Strings: []string{"a", long, huge}, utf8: utf8}
+		c, err := readChunk(p.encode())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := parseStringPool(c)
+		if err != nil {
+			t.Fatalf("utf8=%v: %v", utf8, err)
+		}
+		for i, want := range p.Strings {
+			if got.Strings[i] != want {
+				t.Errorf("utf8=%v: string %d has %d bytes, want %d", utf8, i, len(got.Strings[i]), len(want))
+			}
+		}
+	}
+}
+
+func TestDecodeStringRejectsTruncatedData(t *testing.T) {
+	cases := []struct {
+		b    []byte
+		utf8 bool
+	}{
+		{nil, false},
+		{[]byte{1}, false},                 // no room for the length
+		{[]byte{2, 0, 'a', 0}, false},      // 2 units announced, 1 present
+		{[]byte{0x00, 0x80, 0}, false},     // long length cut short
+		{[]byte{0x81}, true},               // two-byte length cut short
+		{[]byte{1}, true},                  // no byte length
+		{[]byte{3, 3, 'a', 'b'}, true},     // 3 bytes announced, 2 present
+		{[]byte{1, 0x81, 0x00, 'a'}, true}, // 0x100 bytes announced
+	}
+	for _, c := range cases {
+		if s, err := decodeString(c.b, 0, c.utf8); err == nil {
+			t.Errorf("decodeString(% x, utf8=%v) = %q, want an error", c.b, c.utf8, s)
+		}
+	}
+	if _, err := decodeString([]byte{0, 0}, -1, false); err == nil {
+		t.Error("negative offset accepted")
+	}
+}

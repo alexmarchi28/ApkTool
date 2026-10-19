@@ -1,0 +1,31 @@
+
+[36m[1m   ╔══════════════════════════════════════════╗
+   ║                 ApkTool                  ║
+   ║   Cambia package name ed etichetta APK   ║
+   ╚══════════════════════════════════════════╝[0m
+
+[1m  1) Seleziona l'APK[0m
+     Percorso dell'APK (puoi anche trascinarlo qui): [31m     File non valido o inesistente.[0m
+     Percorso dell'APK (puoi anche trascinarlo qui):      [32m✔ [0m<SRC>
+
+[1m  2) Package name[0m
+     Attuale: [33mcom.example.demo[0m
+     Nuovo package name [2m(Invio = lascia invariato)[0m: [31m     Formato non valido. Esempio: it.azienda.app.test (lettere, numeri e _, almeno un punto).[0m
+     Nuovo package name [2m(Invio = lascia invariato)[0m: 
+[1m  3) Etichetta (nome visibile dell'app)[0m
+     Attuale: [33mDemo App[0m
+     Nuova etichetta [2m(Invio = lascia invariata)[0m: 
+[1m  4) Cartella di destinazione[0m
+     Predefinita: [33m<HOME>/Downloads[0m
+     Percorso [2m(Invio = usa la predefinita)[0m: 
+[1m  Riepilogo[0m
+     Package:   com.example.demo  →  [32mit.prova.copia[0m
+     Etichetta: Demo App  →  [32mCopia di prova[0m
+     File:      <DEST>/copia_di_prova_AAAAMMGG.apk
+
+[2m  Creazione e firma dell'APK...[0m
+[32m[1m  ✔ APK creato:[0m
+     <DEST>/copia_di_prova_AAAAMMGG.apk
+
+[2m     Nota: l'APK è firmato con una chiave di test, quindi si installa[0m
+[2m     come app separata e non come aggiornamento dell'originale.[0m

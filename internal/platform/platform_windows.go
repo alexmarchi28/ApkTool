@@ -1,15 +1,17 @@
 //go:build windows
 
-package main
+package platform
 
 import (
 	"bufio"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 )
 
@@ -34,46 +36,73 @@ var (
 	pSetForegroundWindow  = user32.NewProc("SetForegroundWindow")
 )
 
+// The file dialog needs COM on the thread that initialized it.
 func init() { runtime.LockOSThread() }
 
-func setupConsole() {
+// OS is the Windows platform: UTF-8 console with colors, Unicode input, the
+// Explorer file dialog and the Downloads known folder.
+type OS struct {
+	in      *bufio.Reader
+	console syscall.Handle // valid if the input is a console
+	isTTY   bool
+}
+
+// New returns the platform, reading the answers of the user from in. If in
+// is the console, it is read with ReadConsoleW for full Unicode support.
+func New(in io.Reader) *OS {
+	o := &OS{in: bufio.NewReader(in)}
+	if f, ok := in.(*os.File); ok {
+		o.console = syscall.Handle(f.Fd())
+		o.isTTY = consoleMode(o.console) != nil
+	}
+	return o
+}
+
+func consoleMode(h syscall.Handle) *uint32 {
+	var mode uint32
+	if r, _, _ := pGetConsoleMode.Call(uintptr(h), uintptr(unsafe.Pointer(&mode))); r == 0 {
+		return nil
+	}
+	return &mode
+}
+
+// SetupConsole switches the console to UTF-8 with ANSI colors, sets its
+// title and initializes COM for the file dialog.
+func (o *OS) SetupConsole() {
 	pSetConsoleOutputCP.Call(65001)
 	pSetConsoleCP.Call(65001)
 	t, _ := syscall.UTF16PtrFromString("ApkTool")
 	pSetConsoleTitleW.Call(uintptr(unsafe.Pointer(t)))
 	for _, h := range []syscall.Handle{syscall.Stdout, syscall.Stderr} {
-		var mode uint32
-		if r, _, _ := pGetConsoleMode.Call(uintptr(h), uintptr(unsafe.Pointer(&mode))); r != 0 {
-			pSetConsoleMode.Call(uintptr(h), uintptr(mode|0x0004)) // ENABLE_VIRTUAL_TERMINAL_PROCESSING
+		if mode := consoleMode(h); mode != nil {
+			pSetConsoleMode.Call(uintptr(h), uintptr(*mode|0x0004)) // ENABLE_VIRTUAL_TERMINAL_PROCESSING
 		}
 	}
-	pCoInitializeEx.Call(0, 2) // COINIT_APARTMENTTHREADED, needed by the file dialog
+	pCoInitializeEx.Call(0, 2) // COINIT_APARTMENTTHREADED
 }
 
-var stdinReader = bufio.NewReader(os.Stdin)
-
-// readLine reads a line with full Unicode support from the console.
-func readLine() string {
-	h := syscall.Stdin
-	var mode uint32
-	if r, _, _ := pGetConsoleMode.Call(uintptr(h), uintptr(unsafe.Pointer(&mode))); r == 0 {
-		s, _ := stdinReader.ReadString('\n')
-		return strings.TrimRight(s, "\r\n")
+// ReadLine reads one line typed by the user.
+func (o *OS) ReadLine() (string, error) {
+	if !o.isTTY {
+		return readLine(o.in)
 	}
 	var out []uint16
 	buf := make([]uint16, 512)
 	for {
 		var n uint32
-		r, _, _ := pReadConsoleW.Call(uintptr(h), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), uintptr(unsafe.Pointer(&n)), 0)
+		r, _, _ := pReadConsoleW.Call(uintptr(o.console), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), uintptr(unsafe.Pointer(&n)), 0)
 		if r == 0 || n == 0 {
+			if len(out) == 0 {
+				return "", io.EOF
+			}
 			break
 		}
 		out = append(out, buf[:n]...)
-		if n > 0 && buf[n-1] == '\n' {
+		if buf[n-1] == '\n' {
 			break
 		}
 	}
-	return strings.TrimRight(syscall.UTF16ToString(out), "\r\n")
+	return strings.TrimRight(syscall.UTF16ToString(out), "\r\n"), nil
 }
 
 type openFileName struct {
@@ -102,18 +131,16 @@ type openFileName struct {
 	flagsEx           uint32
 }
 
-func utf16z(s string) []uint16 { // string with embedded NULs → UTF-16
-	return utf16Encode(s)
-}
+// PickHint is shown before PickAPK opens the file dialog.
+func (o *OS) PickHint() string { return "Si apre Esplora file: scegli il file .apk da modificare." }
 
-// pickHint is shown before pickApkFile opens the file dialog.
-const pickHint = "Si apre Esplora file: scegli il file .apk da modificare."
-
-func pickApkFile() string {
-	filter := utf16z("File APK (*.apk)\x00*.apk\x00Tutti i file (*.*)\x00*.*\x00\x00")
+// PickAPK opens the Explorer file dialog on the Downloads folder.
+func (o *OS) PickAPK() string {
+	// The filter is a list of NUL-terminated strings ending with an empty one.
+	filter := utf16.Encode([]rune("File APK (*.apk)\x00*.apk\x00Tutti i file (*.*)\x00*.*\x00\x00"))
 	title, _ := syscall.UTF16PtrFromString("ApkTool - Seleziona l'APK da modificare")
 	ext, _ := syscall.UTF16PtrFromString("apk")
-	initial, _ := syscall.UTF16PtrFromString(downloadsDir())
+	initial, _ := syscall.UTF16PtrFromString(o.DownloadsDir())
 	file := make([]uint16, 4096)
 	hwnd, _, _ := pGetConsoleWindow.Call()
 	ofn := openFileName{
@@ -138,14 +165,14 @@ func pickApkFile() string {
 	return syscall.UTF16ToString(file)
 }
 
-func downloadsDir() string {
+// DownloadsDir returns the Downloads known folder, or ~/Downloads.
+func (o *OS) DownloadsDir() string {
 	// FOLDERID_Downloads {374DE290-123F-4565-9164-39C4925E467B}
 	guid := [16]byte{0x90, 0xE2, 0x4D, 0x37, 0x3F, 0x12, 0x65, 0x45, 0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B}
 	var p *uint16
 	if r, _, _ := pSHGetKnownFolderPath.Call(uintptr(unsafe.Pointer(&guid[0])), 0, 0, uintptr(unsafe.Pointer(&p))); r == 0 && p != nil {
 		defer pCoTaskMemFree.Call(uintptr(unsafe.Pointer(p)))
-		s := utf16PtrToString(p)
-		if s != "" {
+		if s := utf16PtrToString(p); s != "" {
 			return s
 		}
 	}
@@ -165,6 +192,7 @@ func utf16PtrToString(p *uint16) string {
 	return syscall.UTF16ToString(u)
 }
 
-func revealInExplorer(path string) {
+// Reveal opens Explorer with the file selected.
+func (o *OS) Reveal(path string) {
 	exec.Command("explorer.exe", "/select,", path).Start()
 }

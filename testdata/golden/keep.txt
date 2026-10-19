@@ -1,0 +1,29 @@
+
+[36m[1m   ╔══════════════════════════════════════════╗
+   ║                 ApkTool                  ║
+   ║   Cambia package name ed etichetta APK   ║
+   ╚══════════════════════════════════════════╝[0m
+
+[1m  1) Seleziona l'APK[0m
+     Percorso dell'APK (puoi anche trascinarlo qui):      [32m✔ [0m<SRC>
+
+[1m  2) Package name[0m
+     Attuale: [33morg.sample.nolabel[0m
+     Nuovo package name [2m(Invio = lascia invariato)[0m: 
+[1m  3) Etichetta (nome visibile dell'app)[0m
+     Attuale: [33m(nessuna)[0m
+     Nuova etichetta [2m(Invio = lascia invariata)[0m: 
+[1m  4) Cartella di destinazione[0m
+     Predefinita: [33m<HOME>/Downloads[0m
+     Percorso [2m(Invio = usa la predefinita)[0m: 
+[1m  Riepilogo[0m
+     Package:   org.sample.nolabel  →  [32morg.sample.nolabel[0m
+     Etichetta: (nessuna)  →  [32m(nessuna)[0m
+     File:      <HOME>/Downloads/app_AAAAMMGG.apk
+
+[2m  Creazione e firma dell'APK...[0m
+[32m[1m  ✔ APK creato:[0m
+     <HOME>/Downloads/app_AAAAMMGG.apk
+
+[2m     Nota: l'APK è firmato con una chiave di test, quindi si installa[0m
+[2m     come app separata e non come aggiornamento dell'originale.[0m

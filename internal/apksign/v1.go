@@ -5,7 +5,8 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
+	_ "crypto/sha1" // registers crypto.SHA1
+	_ "crypto/sha256"
 	"encoding/asn1"
 	"encoding/base64"
 	"math/big"
@@ -36,41 +37,89 @@ func IsSignatureFile(name string) bool {
 	return false
 }
 
-// FileDigest is the SHA-256 digest of the uncompressed content of a ZIP entry.
+// DigestAlgorithm is the digest used by a v1 signature.
+type DigestAlgorithm int
+
+const (
+	SHA256 DigestAlgorithm = iota
+	SHA1
+)
+
+// V1DigestFor returns the digest that apksigner picks for an app with the
+// given minimum API level: SHA-256 with RSA is only supported from API 18.
+func V1DigestFor(minSdk int) DigestAlgorithm {
+	if minSdk < 18 {
+		return SHA1
+	}
+	return SHA256
+}
+
+// String returns the name used in the JAR manifest attributes.
+func (d DigestAlgorithm) String() string {
+	if d == SHA1 {
+		return "SHA1"
+	}
+	return "SHA-256"
+}
+
+// Hash returns the hash function of d.
+func (d DigestAlgorithm) Hash() crypto.Hash {
+	if d == SHA1 {
+		return crypto.SHA1
+	}
+	return crypto.SHA256
+}
+
+func (d DigestAlgorithm) oid() asn1.ObjectIdentifier {
+	if d == SHA1 {
+		return oidSHA1
+	}
+	return oidSHA256
+}
+
+// Sum returns the digest of b.
+func (d DigestAlgorithm) Sum(b []byte) []byte {
+	h := d.Hash().New()
+	h.Write(b)
+	return h.Sum(nil)
+}
+
+func (d DigestAlgorithm) b64sum(b []byte) string {
+	return base64.StdEncoding.EncodeToString(d.Sum(b))
+}
+
+// FileDigest is the digest of the uncompressed content of a ZIP entry.
 type FileDigest struct {
 	Name   string
-	Digest [32]byte
+	Digest []byte
 }
 
 // SignV1 returns the content of MANIFEST.MF, CERT.SF and CERT.RSA (JAR
-// signature) for the given entries, in the order of the constants above.
-// The signature declares that the APK is also signed with scheme v2.
-func (s *Signer) SignV1(files []FileDigest) (mf, sf, block []byte, err error) {
+// signature) for the given entries, whose digests were computed with alg,
+// in the order of the constants above. The signature declares that the APK
+// is also signed with scheme v2.
+func (s *Signer) SignV1(files []FileDigest, alg DigestAlgorithm) (mf, sf, block []byte, err error) {
+	digestAttr := alg.String() + "-Digest"
 	var m, f bytes.Buffer
 	m.WriteString("Manifest-Version: 1.0\r\nCreated-By: ApkTool\r\n\r\n")
 	var sections bytes.Buffer
 	for _, fd := range files {
 		var sec bytes.Buffer
 		writeAttr(&sec, "Name", fd.Name)
-		writeAttr(&sec, "SHA-256-Digest", base64.StdEncoding.EncodeToString(fd.Digest[:]))
+		writeAttr(&sec, digestAttr, base64.StdEncoding.EncodeToString(fd.Digest))
 		sec.WriteString("\r\n")
 		m.Write(sec.Bytes())
 		writeAttr(&sections, "Name", fd.Name)
-		writeAttr(&sections, "SHA-256-Digest", b64sum(sec.Bytes()))
+		writeAttr(&sections, digestAttr, alg.b64sum(sec.Bytes()))
 		sections.WriteString("\r\n")
 	}
 	f.WriteString("Signature-Version: 1.0\r\nCreated-By: ApkTool\r\n")
-	writeAttr(&f, "SHA-256-Digest-Manifest", b64sum(m.Bytes()))
+	writeAttr(&f, digestAttr+"-Manifest", alg.b64sum(m.Bytes()))
 	f.WriteString("X-Android-APK-Signed: 2\r\n\r\n")
 	f.Write(sections.Bytes())
 
-	block, err = s.pkcs7(f.Bytes())
+	block, err = s.pkcs7(f.Bytes(), alg)
 	return m.Bytes(), f.Bytes(), block, err
-}
-
-func b64sum(b []byte) string {
-	d := sha256.Sum256(b)
-	return base64.StdEncoding.EncodeToString(d[:])
 }
 
 // writeAttr writes "name: value" wrapping lines at 72 bytes as required by
@@ -97,6 +146,7 @@ func writeAttr(w *bytes.Buffer, name, value string) {
 var (
 	oidData          = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 7, 1}
 	oidSignedData    = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 7, 2}
+	oidSHA1          = asn1.ObjectIdentifier{1, 3, 14, 3, 2, 26}
 	oidSHA256        = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}
 	oidRSAEncryption = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 1}
 )
@@ -132,24 +182,24 @@ type signedData struct {
 	SignerInfos      []signerInfo `asn1:"set"`
 }
 
-// pkcs7 signs content and returns a detached PKCS#7 SignedData.
-func (s *Signer) pkcs7(content []byte) ([]byte, error) {
-	digest := sha256.Sum256(content)
-	sig, err := rsa.SignPKCS1v15(rand.Reader, s.key, crypto.SHA256, digest[:])
+// pkcs7 signs content with RSA and alg and returns a detached PKCS#7
+// SignedData.
+func (s *Signer) pkcs7(content []byte, alg DigestAlgorithm) ([]byte, error) {
+	sig, err := rsa.SignPKCS1v15(rand.Reader, s.key, alg.Hash(), alg.Sum(content))
 	if err != nil {
 		return nil, err
 	}
 	null := asn1.RawValue{Tag: asn1.TagNull}
-	sha256Alg := algorithmID{oidSHA256, null}
+	digestAlg := algorithmID{alg.oid(), null}
 	sd := signedData{
 		Version:          1,
-		DigestAlgorithms: []algorithmID{sha256Alg},
+		DigestAlgorithms: []algorithmID{digestAlg},
 		ContentInfo:      contentInfo{ContentType: oidData},
 		Certificates:     asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 0, IsCompound: true, Bytes: s.cert.Raw},
 		SignerInfos: []signerInfo{{
 			Version:            1,
 			IssuerAndSerial:    issuerAndSerial{asn1.RawValue{FullBytes: s.cert.RawIssuer}, s.cert.SerialNumber},
-			DigestAlgorithm:    sha256Alg,
+			DigestAlgorithm:    digestAlg,
 			SignatureAlgorithm: algorithmID{oidRSAEncryption, null},
 			EncryptedDigest:    sig,
 		}},

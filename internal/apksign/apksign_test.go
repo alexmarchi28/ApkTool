@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/rsa"
+	_ "crypto/sha1"
 	"crypto/sha256"
 	"encoding/asn1"
 	"encoding/base64"
@@ -86,19 +87,50 @@ func TestWriteAttrWrapsLongLines(t *testing.T) {
 	}
 }
 
+func TestV1DigestFor(t *testing.T) {
+	// SHA-256 in JAR signatures is only supported from API level 18.
+	for minSdk, want := range map[int]DigestAlgorithm{1: SHA1, 17: SHA1, 18: SHA256, 34: SHA256} {
+		if got := V1DigestFor(minSdk); got != want {
+			t.Errorf("V1DigestFor(%d) = %s, want %s", minSdk, got, want)
+		}
+	}
+}
+
 func TestSignV1(t *testing.T) {
+	tests := []struct {
+		alg  DigestAlgorithm
+		name string
+		hash crypto.Hash
+		oid  asn1.ObjectIdentifier
+	}{
+		{SHA256, "SHA-256", crypto.SHA256, asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}},
+		{SHA1, "SHA1", crypto.SHA1, asn1.ObjectIdentifier{1, 3, 14, 3, 2, 26}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checkSignV1(t, tt.alg, tt.name, tt.hash, tt.oid)
+		})
+	}
+}
+
+func checkSignV1(t *testing.T, alg DigestAlgorithm, name string, hash crypto.Hash, oid asn1.ObjectIdentifier) {
 	s := debugSigner(t)
-	files := []FileDigest{{Name: "AndroidManifest.xml", Digest: sha256.Sum256([]byte("m"))}, {Name: "classes.dex", Digest: sha256.Sum256([]byte("d"))}}
-	mf, sf, block, err := s.SignV1(files)
+	sum := func(b []byte) []byte { h := hash.New(); h.Write(b); return h.Sum(nil) }
+	b64 := func(b []byte) string { return base64.StdEncoding.EncodeToString(sum(b)) }
+	files := []FileDigest{{Name: "AndroidManifest.xml", Digest: sum([]byte("m"))}, {Name: "classes.dex", Digest: sum([]byte("d"))}}
+	mf, sf, block, err := s.SignV1(files, alg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := sha256.Sum256([]byte("m"))
-	if !bytes.Contains(mf, []byte("Name: AndroidManifest.xml\r\nSHA-256-Digest: "+base64.StdEncoding.EncodeToString(d[:])+"\r\n")) {
+	section := "Name: AndroidManifest.xml\r\n" + name + "-Digest: " + b64([]byte("m")) + "\r\n\r\n"
+	if !bytes.Contains(mf, []byte(section)) {
 		t.Errorf("MANIFEST.MF without the entry digest:\n%s", mf)
 	}
-	if !bytes.Contains(sf, []byte("SHA-256-Digest-Manifest: "+b64sum(mf)+"\r\n")) {
+	if !bytes.Contains(sf, []byte(name+"-Digest-Manifest: "+b64(mf)+"\r\n")) {
 		t.Error("CERT.SF does not hold the digest of MANIFEST.MF")
+	}
+	if !bytes.Contains(sf, []byte("Name: AndroidManifest.xml\r\n"+name+"-Digest: "+b64([]byte(section))+"\r\n")) {
+		t.Errorf("CERT.SF does not hold the digest of the manifest section:\n%s", sf)
 	}
 	if !bytes.Contains(sf, []byte("X-Android-APK-Signed: 2\r\n")) {
 		t.Error("CERT.SF does not declare the v2 signature")
@@ -122,6 +154,9 @@ func TestSignV1(t *testing.T) {
 	if !bytes.Equal(sd.Certificates.Bytes, s.cert.Raw) {
 		t.Error("certificate missing from the PKCS#7 block")
 	}
+	if len(sd.DigestAlgorithms) != 1 || !sd.DigestAlgorithms[0].Algorithm.Equal(oid) {
+		t.Errorf("digest algorithms %v, want %v", sd.DigestAlgorithms, oid)
+	}
 	if len(sd.SignerInfos) != 1 {
 		t.Fatalf("%d signers", len(sd.SignerInfos))
 	}
@@ -129,13 +164,15 @@ func TestSignV1(t *testing.T) {
 	if si.IssuerAndSerial.Serial.Cmp(s.cert.SerialNumber) != 0 {
 		t.Error("wrong serial number")
 	}
-	h := sha256.Sum256(sf)
-	if err := rsa.VerifyPKCS1v15(&s.key.PublicKey, crypto.SHA256, h[:], si.EncryptedDigest); err != nil {
+	if !si.DigestAlgorithm.Algorithm.Equal(oid) {
+		t.Errorf("signer digest algorithm %v, want %v", si.DigestAlgorithm.Algorithm, oid)
+	}
+	if err := rsa.VerifyPKCS1v15(&s.key.PublicKey, hash, sum(sf), si.EncryptedDigest); err != nil {
 		t.Errorf("signature of CERT.SF: %v", err)
 	}
 }
 
-func makeZip(t *testing.T, files map[string]string, comment string) []byte {
+func makeZip(t testing.TB, files map[string]string, comment string) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	w := zip.NewWriter(&b)
