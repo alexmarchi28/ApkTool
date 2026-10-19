@@ -13,10 +13,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: stable
       - run: go vet ./...
       - run: go test ./...
 
@@ -32,10 +32,10 @@ jobs:
           - { goos: darwin, goarch: amd64, file: apktool }
           - { goos: darwin, goarch: arm64, file: apktool }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: stable
       - name: Compilazione
         env:
           GOOS: ${{ matrix.goos }}

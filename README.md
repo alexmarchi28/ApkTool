@@ -48,7 +48,7 @@ controllare firma, package ed etichetta prima di essere salvato.
 
 ## Compilazione
 
-Requisiti: [Go](https://go.dev/dl/) 1.22 o successivo.
+Requisiti: [Go](https://go.dev/dl/) 1.24 o successivo.
 
 ```powershell
 .\build.ps1      # Windows

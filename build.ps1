@@ -1,4 +1,4 @@
-# Esegue i test e compila dist\ApkTool.exe (richiede Go 1.22 o successivo)
+# Esegue i test e compila dist\ApkTool.exe (richiede Go 1.24 o successivo)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
