@@ -9,6 +9,8 @@ import (
 const (
 	TypeReference = 0x01
 	TypeString    = 0x03
+	TypeIntDec    = 0x10
+	TypeIntHex    = 0x11
 )
 
 // XML is a compiled Android XML document. Elements and their attributes can
