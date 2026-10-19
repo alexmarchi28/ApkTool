@@ -1,0 +1,73 @@
+# Quando viene pubblicato un tag "v*" (es. v1.0.0): esegue i test, compila per
+# Windows, Linux e macOS e crea una release GitHub con i file allegati.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: windows, goarch: amd64, file: ApkTool.exe }
+          - { goos: linux, goarch: amd64, file: apktool }
+          - { goos: linux, goarch: arm64, file: apktool }
+          - { goos: darwin, goarch: amd64, file: apktool }
+          - { goos: darwin, goarch: arm64, file: apktool }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Compilazione
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p out
+          go build -trimpath -ldflags "-s -w" -o "out/${{ matrix.file }}" .
+      - name: Pacchetto
+        run: |
+          name="ApkTool-${GITHUB_REF_NAME}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          cd out
+          if [ "${{ matrix.goos }}" = windows ]; then
+            zip "../$name.zip" "${{ matrix.file }}"
+          else
+            tar -czf "../$name.tar.gz" "${{ matrix.file }}"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ApkTool-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Checksum
+        run: sha256sum ApkTool-* > SHA256SUMS.txt
+      - name: Crea la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" ApkTool-* SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --title "ApkTool $GITHUB_REF_NAME" --generate-notes
